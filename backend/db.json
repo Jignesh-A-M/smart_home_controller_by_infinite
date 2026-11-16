@@ -100,9 +100,9 @@
       "online": true,
       "favourite": false,
       "state": {
-        "motion": true
+        "motion": false
       },
-      "lastUpdated": "2026-11-16T11:05:28.785Z"
+      "lastUpdated": "2026-11-16T11:20:39.485Z"
     },
     {
       "id": "d6",
@@ -137,10 +137,10 @@
       "online": true,
       "favourite": false,
       "state": {
-        "temperature": 17.8,
-        "humidity": 37
+        "temperature": 19.5,
+        "humidity": 29
       },
-      "lastUpdated": "2026-11-16T11:05:28.816Z"
+      "lastUpdated": "2026-11-16T11:20:39.517Z"
     },
     {
       "id": "d9",
@@ -226,10 +226,10 @@
       "online": true,
       "favourite": false,
       "state": {
-        "temperature": 16.3,
-        "humidity": 25
+        "temperature": 17.8,
+        "humidity": 29
       },
-      "lastUpdated": "2026-11-16T11:05:28.831Z"
+      "lastUpdated": "2026-11-16T11:20:39.548Z"
     },
     {
       "id": "d16",
@@ -253,7 +253,7 @@
       "state": {
         "motion": false
       },
-      "lastUpdated": "2026-11-16T11:05:28.846Z"
+      "lastUpdated": "2026-11-16T11:20:39.564Z"
     },
     {
       "id": "d18",

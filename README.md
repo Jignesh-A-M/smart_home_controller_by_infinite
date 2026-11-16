@@ -117,8 +117,11 @@ Set the app's REST URL to `http://YOUR_COMPUTER_LAN_IP:3000` and allow local por
 3000 through the computer's firewall. For the standard Android emulator, the host
 can also be reached using `http://10.0.2.2:3000`.
 
-Local HTTP is enabled for **debug builds**. A release build with this HTTP setup
-has not been verified.
+For a release APK used without ADB forwarding, enter the computer's LAN address
+in Settings. `127.0.0.1` means the phone itself, so it works only when forwarding
+is set up. The installed release APK was verified loading all five rooms over LAN
+without forwarding. Both backend processes must still be running; they are not
+included in the APK. Full release-flow checks remain pending.
 
 ## What each flow does
 
@@ -217,7 +220,7 @@ These also passed. Older learning/debug tools are kept in
 
 ## Issues faced
 
-- **Phone could not reach REST:** JSON Server now binds to all local interfaces. Check the app URL and recreate `adb reverse` after USB reconnection.
+- **Phone could not reach REST:** JSON Server now binds to all local interfaces. A fresh release installation was stuck reconnecting because its saved URL was `127.0.0.1` with no ADB forwarding. Using the computer LAN URL fixed it. For a forwarded connection, recreate `adb reverse` after reconnection.
 - **MQTT disconnects:** socket errors from the public broker use the reconnect path. A broker connection does not prove the simulator is running; device replies still confirm commands.
 - **Server restart:** REST recovery was separated from MQTT recovery so the app can resync without restarting Flutter.
 - **Old replies and retry messages:** request IDs/freshness checks protect confirmations, and a successful control clears its own failed retry entry.
@@ -232,7 +235,7 @@ These also passed. Older learning/debug tools are kept in
 - **Clean-machine build:** the setup steps above describe the intended local run. A fresh checkout on another machine has not been fully verified, especially the existing Firebase/Gradle compatibility issue.
 - **Demo video:** the final reviewed 2-3 minute recording is not ready. It must show live control, failure rollback/retry and offline mode using the latest build.
 - **Repository access:** the final repository link and reviewer access still need to be provided and checked.
-- **Optional APK:** a debug APK was built locally, but it predates the latest room-screen change. Rebuild and test the latest source before sharing it. No verified release APK is claimed.
+- **APK attachment and final checks:** a release APK is installed on the phone, and its REST/MQTT connection was checked over LAN. Full release-flow checks and the final APK attachment still need to be completed; connection success alone is not a full acceptance test.
 
 For the local HTTP setup, build the optional debug APK with:
 
