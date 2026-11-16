@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Allow the assignment's local HTTP mock hub in debug builds only. -->
+    <application android:usesCleartextTraffic="true" />
+</manifest>

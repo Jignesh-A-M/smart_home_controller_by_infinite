@@ -1,0 +1,478 @@
+{
+  "hub": {
+    "id": "hub-01",
+    "name": "Infinite Automation Demo Hub",
+    "firmware": "2.4.1",
+    "mqttBroker": "broker.hivemq.com",
+    "mqttPort": 1883,
+    "topicPrefix": "ia/<yourname>"
+  },
+  "rooms": [
+    {
+      "id": "r1",
+      "name": "Living Room",
+      "icon": "sofa",
+      "order": 1
+    },
+    {
+      "id": "r2",
+      "name": "Kitchen",
+      "icon": "kitchen",
+      "order": 2
+    },
+    {
+      "id": "r3",
+      "name": "Master Bedroom",
+      "icon": "bed",
+      "order": 3
+    },
+    {
+      "id": "r4",
+      "name": "Office",
+      "icon": "desk",
+      "order": 4
+    },
+    {
+      "id": "r5",
+      "name": "Outdoor",
+      "icon": "tree",
+      "order": 5
+    }
+  ],
+  "devices": [
+    {
+      "id": "d1",
+      "roomId": "r1",
+      "name": "Ceiling Light",
+      "type": "light",
+      "online": true,
+      "favourite": true,
+      "state": {
+        "on": true
+      },
+      "lastUpdated": "2026-11-15T19:47:56.954Z"
+    },
+    {
+      "id": "d2",
+      "roomId": "r1",
+      "name": "Feature Wall Dimmer",
+      "type": "dimmer",
+      "online": true,
+      "favourite": false,
+      "state": {
+        "on": false,
+        "level": 80
+      },
+      "lastUpdated": "2026-11-16T07:00:52.173Z"
+    },
+    {
+      "id": "d3",
+      "roomId": "r1",
+      "name": "Front Blinds",
+      "type": "blind",
+      "online": true,
+      "favourite": true,
+      "state": {
+        "position": 56
+      },
+      "lastUpdated": "2026-11-16T10:44:18.229Z"
+    },
+    {
+      "id": "d4",
+      "roomId": "r1",
+      "name": "Living AC",
+      "type": "thermostat",
+      "online": true,
+      "favourite": false,
+      "state": {
+        "on": true,
+        "mode": "cool",
+        "setpoint": 21,
+        "current": 26.5
+      },
+      "lastUpdated": "2026-11-15T19:45:33.661Z"
+    },
+    {
+      "id": "d5",
+      "roomId": "r1",
+      "name": "Living Motion Sensor",
+      "type": "sensor",
+      "online": true,
+      "favourite": false,
+      "state": {
+        "motion": true
+      },
+      "lastUpdated": "2026-11-16T11:05:28.785Z"
+    },
+    {
+      "id": "d6",
+      "roomId": "r2",
+      "name": "Downlights",
+      "type": "dimmer",
+      "online": true,
+      "favourite": false,
+      "state": {
+        "on": false,
+        "level": 80
+      },
+      "lastUpdated": "2026-11-16T09:46:16.059Z"
+    },
+    {
+      "id": "d7",
+      "roomId": "r2",
+      "name": "Pendant Lights",
+      "type": "light",
+      "online": true,
+      "favourite": false,
+      "state": {
+        "on": false
+      },
+      "lastUpdated": "2026-11-12T08:00:00Z"
+    },
+    {
+      "id": "d8",
+      "roomId": "r2",
+      "name": "Kitchen Temperature",
+      "type": "sensor",
+      "online": true,
+      "favourite": false,
+      "state": {
+        "temperature": 17.8,
+        "humidity": 37
+      },
+      "lastUpdated": "2026-11-16T11:05:28.816Z"
+    },
+    {
+      "id": "d9",
+      "roomId": "r3",
+      "name": "Bedside Lamp",
+      "type": "dimmer",
+      "online": true,
+      "favourite": true,
+      "state": {
+        "on": false,
+        "level": 30
+      },
+      "lastUpdated": "2026-11-12T08:00:00Z"
+    },
+    {
+      "id": "d10",
+      "roomId": "r3",
+      "name": "Bedroom Light",
+      "type": "light",
+      "online": true,
+      "favourite": false,
+      "state": {
+        "on": false
+      },
+      "lastUpdated": "2026-11-12T08:00:00Z"
+    },
+    {
+      "id": "d11",
+      "roomId": "r3",
+      "name": "Bedroom Blinds",
+      "type": "blind",
+      "online": true,
+      "favourite": false,
+      "state": {
+        "position": 100
+      },
+      "lastUpdated": "2026-11-16T09:45:10.828Z"
+    },
+    {
+      "id": "d12",
+      "roomId": "r3",
+      "name": "Bedroom AC",
+      "type": "thermostat",
+      "online": true,
+      "favourite": true,
+      "state": {
+        "on": false,
+        "mode": "auto",
+        "setpoint": 21,
+        "current": 24
+      },
+      "lastUpdated": "2026-11-15T13:49:45.408Z"
+    },
+    {
+      "id": "d13",
+      "roomId": "r4",
+      "name": "Desk Light",
+      "type": "light",
+      "online": true,
+      "favourite": false,
+      "state": {
+        "on": true
+      },
+      "lastUpdated": "2026-11-16T06:58:49.662Z"
+    },
+    {
+      "id": "d14",
+      "roomId": "r4",
+      "name": "Office Blinds",
+      "type": "blind",
+      "online": false,
+      "favourite": false,
+      "state": {
+        "position": 0
+      },
+      "lastUpdated": "2026-11-11T18:30:00Z"
+    },
+    {
+      "id": "d15",
+      "roomId": "r4",
+      "name": "Office Temperature",
+      "type": "sensor",
+      "online": true,
+      "favourite": false,
+      "state": {
+        "temperature": 16.3,
+        "humidity": 25
+      },
+      "lastUpdated": "2026-11-16T11:05:28.831Z"
+    },
+    {
+      "id": "d16",
+      "roomId": "r5",
+      "name": "Garden Lights",
+      "type": "light",
+      "online": true,
+      "favourite": true,
+      "state": {
+        "on": true
+      },
+      "lastUpdated": "2026-11-15T19:45:09.322Z"
+    },
+    {
+      "id": "d17",
+      "roomId": "r5",
+      "name": "Porch Motion Sensor",
+      "type": "sensor",
+      "online": true,
+      "favourite": false,
+      "state": {
+        "motion": false
+      },
+      "lastUpdated": "2026-11-16T11:05:28.846Z"
+    },
+    {
+      "id": "d18",
+      "roomId": "r5",
+      "name": "Pool Pump",
+      "type": "unknown_relay",
+      "online": true,
+      "favourite": false,
+      "state": {
+        "on": false
+      },
+      "lastUpdated": "2026-11-12T08:00:00Z"
+    }
+  ],
+  "scenes": [
+    {
+      "id": "s1",
+      "name": "Good Morning",
+      "icon": "sunrise",
+      "favourite": true,
+      "actions": [
+        {
+          "deviceId": "d3",
+          "state": {
+            "position": 100
+          }
+        },
+        {
+          "deviceId": "d11",
+          "state": {
+            "position": 100
+          }
+        },
+        {
+          "deviceId": "d6",
+          "state": {
+            "on": true,
+            "level": 80
+          }
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "name": "Good Night",
+      "icon": "moon",
+      "favourite": true,
+      "actions": [
+        {
+          "deviceId": "d1",
+          "state": {
+            "on": false
+          }
+        },
+        {
+          "deviceId": "d2",
+          "state": {
+            "on": false,
+            "level": 0
+          }
+        },
+        {
+          "deviceId": "d7",
+          "state": {
+            "on": false
+          }
+        },
+        {
+          "deviceId": "d10",
+          "state": {
+            "on": false
+          }
+        },
+        {
+          "deviceId": "d3",
+          "state": {
+            "position": 0
+          }
+        },
+        {
+          "deviceId": "d11",
+          "state": {
+            "position": 0
+          }
+        },
+        {
+          "deviceId": "d12",
+          "state": {
+            "on": true,
+            "mode": "cool",
+            "setpoint": 20
+          }
+        }
+      ]
+    },
+    {
+      "id": "s3",
+      "name": "Movie Time",
+      "icon": "movie",
+      "favourite": false,
+      "actions": [
+        {
+          "deviceId": "d1",
+          "state": {
+            "on": false
+          }
+        },
+        {
+          "deviceId": "d2",
+          "state": {
+            "on": true,
+            "level": 15
+          }
+        },
+        {
+          "deviceId": "d3",
+          "state": {
+            "position": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "s4",
+      "name": "Away",
+      "icon": "lock",
+      "favourite": false,
+      "actions": [
+        {
+          "deviceId": "d1",
+          "state": {
+            "on": false
+          }
+        },
+        {
+          "deviceId": "d13",
+          "state": {
+            "on": false
+          }
+        },
+        {
+          "deviceId": "d4",
+          "state": {
+            "on": false
+          }
+        },
+        {
+          "deviceId": "d12",
+          "state": {
+            "on": false
+          }
+        },
+        {
+          "deviceId": "d16",
+          "state": {
+            "on": true
+          }
+        }
+      ]
+    }
+  ],
+  "schedules": [
+    {
+      "id": "sc1",
+      "name": "Weekday wake up",
+      "target": {
+        "type": "device",
+        "id": "d4",
+        "state": {
+          "on": false,
+          "mode": "cool",
+          "setpoint": 21
+        }
+      },
+      "time": "06:30",
+      "days": [
+        "mon",
+        "tue",
+        "wed",
+        "thu",
+        "fri"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "sc2",
+      "name": "Nightly",
+      "target": {
+        "type": "scene",
+        "id": "s2"
+      },
+      "time": "22:30",
+      "days": [
+        "mon",
+        "tue",
+        "wed",
+        "thu",
+        "fri",
+        "sat",
+        "sun"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "sc3",
+      "name": "Garden lights on",
+      "target": {
+        "type": "device",
+        "id": "d16",
+        "state": {
+          "on": true
+        }
+      },
+      "time": "18:00",
+      "days": [
+        "sat",
+        "sun"
+      ],
+      "enabled": false
+    }
+  ]
+}
