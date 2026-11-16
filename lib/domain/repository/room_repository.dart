@@ -1,7 +1,9 @@
 import '../entities/room.dart';
 
-// Define how the application requests rooms without depending on a data source.
+// List the room operations available to Bloc/Cubit.
 abstract class RoomRepository {
-  // Return rooms asynchronously or report a failure to the caller.
+  // Rooms
+
+  // Return the rooms loaded by the repository.
   Future<List<Room>> getRooms();
 }

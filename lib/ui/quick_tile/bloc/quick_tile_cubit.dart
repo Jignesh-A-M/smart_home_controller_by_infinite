@@ -1,6 +1,7 @@
 import 'dart:async';
-import 'package:equatable/equatable.dart';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
+
 import '../../../domain/entities/home_snapshot.dart';
 import '../../../domain/repository/home_repository.dart';
 import '../../../domain/transport/quick_tile_gateway.dart';
@@ -8,24 +9,9 @@ import '../../home_screen/bloc/home_cubit.dart';
 import '../../scenes_screen/bloc/scene_bloc.dart';
 import '../../scenes_screen/bloc/scene_events.dart';
 import '../../settings_screen/bloc/settings_cubit.dart';
-
-class QuickTileState extends Equatable {
-  const QuickTileState({this.available = false, this.busy = false, this.openScenesVersion = 0});
-  final bool available, busy;
-  final int openScenesVersion;
-  @override
-  List<Object?> get props => [available, busy, openScenesVersion];
-}
+import 'quick_tile_state.dart';
 
 class QuickTileCubit extends Cubit<QuickTileState> {
-  QuickTileCubit({
-    required this.repository,
-    required this.gateway,
-    required this.home,
-    required this.scenes,
-    required this.settings,
-    this.connectionWait = const Duration(seconds: 8),
-  }) : super(const QuickTileState());
   final HomeRepository repository;
   final QuickTileGateway gateway;
   final HomeCubit home;
@@ -40,6 +26,15 @@ class QuickTileCubit extends Cubit<QuickTileState> {
   bool _closing = false;
   String? _configured, _lastToken;
   Future<void> _configuration = Future.value();
+
+  QuickTileCubit({
+    required this.repository,
+    required this.gateway,
+    required this.home,
+    required this.scenes,
+    required this.settings,
+    this.connectionWait = const Duration(seconds: 8),
+  }) : super(const QuickTileState());
 
   // Start native integration after saved preferences are restored.
   Future<void> start() async {

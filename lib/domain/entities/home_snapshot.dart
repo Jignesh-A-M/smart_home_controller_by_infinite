@@ -17,6 +17,7 @@ class Device {
     required this.state,
     required this.lastUpdated,
   });
+
   final String id, roomId, name;
   final DeviceType type;
   final bool online, favourite;
@@ -24,8 +25,8 @@ class Device {
   final DateTime lastUpdated;
 
   bool get isLight => type == DeviceType.light || type == DeviceType.dimmer;
-  bool get controllable =>
-      online && type != DeviceType.sensor && type != DeviceType.unknown;
+
+  bool get controllable => online && type != DeviceType.sensor && type != DeviceType.unknown;
 
   // Replace only confirmed state fields received from the hub.
   Device confirmed(Map<String, dynamic> patch, DateTime timestamp) => Device(
@@ -42,6 +43,7 @@ class Device {
 
 class SceneAction {
   const SceneAction(this.deviceId, this.state);
+
   final String deviceId;
   final Map<String, dynamic> state;
 }
@@ -54,7 +56,10 @@ class Scene {
     required this.favourite,
     required this.actions,
   });
-  final String id, name, icon;
+
+  final String id;
+  final String name;
+  final String icon;
   final bool favourite;
   final List<SceneAction> actions;
 }
@@ -69,6 +74,7 @@ class HomeSnapshot {
     this.schedules = const [],
     this.lastSync,
   });
+
   final String hubName;
   final List<Room> rooms;
   final List<Device> devices;

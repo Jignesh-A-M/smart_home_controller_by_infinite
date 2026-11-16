@@ -48,9 +48,9 @@
       "online": true,
       "favourite": true,
       "state": {
-        "on": true
+        "on": false
       },
-      "lastUpdated": "2026-11-15T19:47:56.954Z"
+      "lastUpdated": "2026-11-16T17:53:11.351Z"
     },
     {
       "id": "d2",
@@ -61,9 +61,9 @@
       "favourite": false,
       "state": {
         "on": false,
-        "level": 80
+        "level": 0
       },
-      "lastUpdated": "2026-11-16T07:00:52.173Z"
+      "lastUpdated": "2026-11-16T17:00:02.266Z"
     },
     {
       "id": "d3",
@@ -73,9 +73,9 @@
       "online": true,
       "favourite": true,
       "state": {
-        "position": 56
+        "position": 0
       },
-      "lastUpdated": "2026-11-16T10:44:18.229Z"
+      "lastUpdated": "2026-11-16T17:00:01.381Z"
     },
     {
       "id": "d4",
@@ -102,7 +102,7 @@
       "state": {
         "motion": false
       },
-      "lastUpdated": "2026-11-16T11:20:39.485Z"
+      "lastUpdated": "2026-11-16T18:09:43.704Z"
     },
     {
       "id": "d6",
@@ -127,7 +127,7 @@
       "state": {
         "on": false
       },
-      "lastUpdated": "2026-11-12T08:00:00Z"
+      "lastUpdated": "2026-11-16T17:00:01.677Z"
     },
     {
       "id": "d8",
@@ -137,10 +137,10 @@
       "online": true,
       "favourite": false,
       "state": {
-        "temperature": 19.5,
-        "humidity": 29
+        "temperature": 22.4,
+        "humidity": 20
       },
-      "lastUpdated": "2026-11-16T11:20:39.517Z"
+      "lastUpdated": "2026-11-16T18:09:43.733Z"
     },
     {
       "id": "d9",
@@ -165,7 +165,7 @@
       "state": {
         "on": false
       },
-      "lastUpdated": "2026-11-12T08:00:00Z"
+      "lastUpdated": "2026-11-16T17:00:01.879Z"
     },
     {
       "id": "d11",
@@ -175,9 +175,9 @@
       "online": true,
       "favourite": false,
       "state": {
-        "position": 100
+        "position": 0
       },
-      "lastUpdated": "2026-11-16T09:45:10.828Z"
+      "lastUpdated": "2026-11-16T17:00:01.070Z"
     },
     {
       "id": "d12",
@@ -187,12 +187,12 @@
       "online": true,
       "favourite": true,
       "state": {
-        "on": false,
-        "mode": "auto",
-        "setpoint": 21,
+        "on": true,
+        "mode": "cool",
+        "setpoint": 20,
         "current": 24
       },
-      "lastUpdated": "2026-11-15T13:49:45.408Z"
+      "lastUpdated": "2026-11-16T17:00:01.585Z"
     },
     {
       "id": "d13",
@@ -226,10 +226,10 @@
       "online": true,
       "favourite": false,
       "state": {
-        "temperature": 17.8,
-        "humidity": 29
+        "temperature": 22.4,
+        "humidity": 93
       },
-      "lastUpdated": "2026-11-16T11:20:39.548Z"
+      "lastUpdated": "2026-11-16T18:09:43.765Z"
     },
     {
       "id": "d16",
@@ -253,7 +253,7 @@
       "state": {
         "motion": false
       },
-      "lastUpdated": "2026-11-16T11:20:39.564Z"
+      "lastUpdated": "2026-11-16T18:09:43.780Z"
     },
     {
       "id": "d18",

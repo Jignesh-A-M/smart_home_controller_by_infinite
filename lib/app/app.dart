@@ -1,18 +1,19 @@
-import '../domain/transport/quick_tile_gateway.dart';
-import '../infrastructure/platform/android_quick_tile_gateway.dart';
-import '../ui/quick_tile/bloc/quick_tile_cubit.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:smart_home_controller_by_infinite/infrastructure/theme/app_theme.dart';
+import 'package:smart_home_controller_by_infinite/ui/quick_tile/bloc/quick_tile_state.dart';
 
 import '../domain/repository/home_repository.dart';
+import '../domain/transport/quick_tile_gateway.dart';
 import '../infrastructure/local/sqlite_home_store.dart';
 import '../infrastructure/network/api_client.dart';
+import '../infrastructure/platform/android_quick_tile_gateway.dart';
 import '../infrastructure/repository/home_repository_impl.dart';
 import '../infrastructure/transport/mqtt_device_transport.dart';
 import '../ui/common/temperature_scope.dart';
 import '../ui/home_screen/bloc/home_cubit.dart';
 import '../ui/home_screen/presentation/home_screen.dart';
+import '../ui/quick_tile/bloc/quick_tile_cubit.dart';
 import '../ui/scenes_screen/bloc/scene_bloc.dart';
 import '../ui/scenes_screen/bloc/scene_events.dart';
 import '../ui/scenes_screen/presentation/scenes_screen.dart';
@@ -96,6 +97,7 @@ class InfiniteHomeApp extends StatelessWidget {
 // Keep both pages alive so navigation preserves search and scene run progress.
 class HomeShell extends StatelessWidget {
   const HomeShell({super.key});
+
   static const destinations = [
     NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
     NavigationDestination(
@@ -108,70 +110,72 @@ class HomeShell extends StatelessWidget {
   ];
 
   @override
-  Widget build(BuildContext context) => BlocProvider(
-    create: (_) => NavigationCubit(),
-    child: BlocListener<QuickTileCubit, QuickTileState>(
-      listenWhen: (previous, current) => previous.openScenesVersion != current.openScenesVersion,
-      listener: (context, state) {
-        final navigator = Navigator.of(context);
-        navigator.popUntil((route) => route.settings.name != '/quick-scene-results');
-        if (ModalRoute.of(context)?.isCurrent != true) {
-          navigator.push(
-            MaterialPageRoute<void>(
-              settings: const RouteSettings(name: '/quick-scene-results'),
-              builder: (_) => const ScenesScreen(),
-            ),
-          );
-        }
-        context.read<NavigationCubit>().select(1);
-      },
-      child: BlocBuilder<NavigationCubit, int>(
-        builder: (context, selected) {
-          return LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 900;
-              void select(int index) {
-                context.read<NavigationCubit>().select(index);
-                if (index == 1) context.read<SceneBloc>().add(ScenesRefreshRequested());
-                if (index == 2) context.read<ScheduleBloc>().add(RefreshSchedules());
-              }
-
-              return Scaffold(
-                body: Row(
-                  children: [
-                    if (wide)
-                      SafeArea(
-                        child: NavigationRail(
-                          selectedIndex: selected,
-                          labelType: NavigationRailLabelType.all,
-                          onDestinationSelected: select,
-                          destinations: [
-                            for (final destination in destinations)
-                              NavigationRailDestination(
-                                icon: destination.icon,
-                                selectedIcon: destination.selectedIcon,
-                                label: Text(destination.label),
-                              ),
-                          ],
+  Widget build(BuildContext context) {
+    return BlocProvider(
+      create: (_) => NavigationCubit(),
+      child: BlocListener<QuickTileCubit, QuickTileState>(
+        listenWhen: (previous, current) => previous.openScenesVersion != current.openScenesVersion,
+        listener: (context, state) {
+          context.read<NavigationCubit>().select(1);
+        },
+        child: BlocBuilder<NavigationCubit, int>(
+          builder: (context, selected) {
+            return LayoutBuilder(
+              builder: (context, constraints) {
+                final wide = constraints.maxWidth >= 900;
+                return Scaffold(
+                  body: Row(
+                    children: [
+                      if (wide) ...[
+                        SafeArea(
+                          child: NavigationRail(
+                            selectedIndex: selected,
+                            labelType: NavigationRailLabelType.all,
+                            onDestinationSelected: (value) => select(index: value, context: context),
+                            destinations: [
+                              for (final destination in destinations) ...[
+                                NavigationRailDestination(
+                                  icon: destination.icon,
+                                  selectedIcon: destination.selectedIcon,
+                                  label: Text(destination.label),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                      Expanded(
+                        key: const ValueKey('home-pages'),
+                        child: IndexedStack(
+                          index: selected,
+                          children: const [HomeScreen(), ScenesScreen(), SchedulesScreen(), SettingsScreen()],
                         ),
                       ),
-                    Expanded(
-                      key: const ValueKey('home-pages'),
-                      child: IndexedStack(
-                        index: selected,
-                        children: const [HomeScreen(), ScenesScreen(), SchedulesScreen(), SettingsScreen()],
-                      ),
-                    ),
-                  ],
-                ),
-                bottomNavigationBar: wide
-                    ? null
-                    : NavigationBar(selectedIndex: selected, onDestinationSelected: select, destinations: destinations),
-              );
-            },
-          );
-        },
+                    ],
+                  ),
+                  bottomNavigationBar: wide
+                      ? null
+                      : NavigationBar(
+                          selectedIndex: selected,
+                          onDestinationSelected: (value) => select(index: value, context: context),
+                          destinations: destinations,
+                        ),
+                );
+              },
+            );
+          },
+        ),
       ),
-    ),
-  );
+    );
+  }
+
+  void select({required int index, required BuildContext context}) {
+    context.read<NavigationCubit>().select(index);
+    if (index == 1) {
+      context.read<SceneBloc>().add(ScenesRefreshRequested());
+    }
+    if (index == 2) {
+      context.read<ScheduleBloc>().add(RefreshSchedules());
+    }
+  }
 }

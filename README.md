@@ -1,5 +1,7 @@
 # Infinite Home - Smart Home Controller
 
+**[Watch the app demo video (2 minutes 59 seconds)](demo/Infinite_Home_Demo.mp4)**
+
 A Flutter assignment that controls a simulated smart home using REST and MQTT.
 It includes rooms, device controls, scenes, schedules, favourites, offline data,
 sensor history and an Android quick tile. No real smart-home hardware or Firebase
@@ -7,6 +9,13 @@ account is needed.
 
 The original requirements are in the
 [assignment PDF](docs/Flutter_Assignment_Smart_Home_Controller.pdf).
+
+## Demo video
+
+**[Open the app demo video](demo/Infinite_Home_Demo.mp4)**
+(about 10.2 MB, MP4, no audio). It shows live control, failed-command rollback,
+offline search and reconnect, plus the main screens and sensor chart.
+[Demo notes and optional captions](demo/README.md) explain the controlled failure.
 
 ## Run the app on your own computer
 
@@ -16,12 +25,15 @@ their matching commands; for example, use `npm` instead of `npm.cmd`.
 
 ### 1. Get the source and tools
 
-Download and extract the submitted source, or clone the repository once its link
-is provided. Open the folder that contains `pubspec.yaml` and `backend/`.
+Download the source from the
+[GitHub repository](https://github.com/Jignesh-A-M/smart_home_controller_by_infinite)
+or use the supplied source ZIP. Open the folder that contains `pubspec.yaml` and
+`backend/`.
 
-Install Flutter, Node.js, Android Studio and the Android SDK. The development setup
-used Flutter **3.44.0**, Dart **3.12.0** and Node.js **22.15.0**. The project needs
-Dart 3.12 or later within Dart 3.
+Install Flutter, Node.js, Android Studio and the Android SDK. The latest build and
+checks use Flutter **3.47.1**, Dart **3.13.1** and Node.js **22.15.0**. Earlier checks
+used Flutter 3.44.0. Use the same Flutter SDK for package installation, tests and
+Android builds; mixing SDKs can cause compilation errors.
 
 Open a terminal in the extracted project folder. If needed, change to it first
 (replace this example path with your own):
@@ -157,6 +169,13 @@ Scenes and Schedules use Bloc; Home, Settings and focused UI state use Cubit.
 Widgets do not call REST, MQTT or SQLite directly. Presentation uses BlocBuilder,
 BlocListener and BlocConsumer, without `setState` or BlocSelector.
 
+The repository interfaces in `lib/domain/repository/` list the methods that
+Bloc/Cubit can call. `HomeRepositoryImpl` contains their working code. Its methods
+use `async`/`await`, normal loops and short comments. To follow the main flow, read
+`loadCache()`, `refresh()`, `command()` and `_onDeviceUpdate()` in that order.
+Scene and schedule saves follow the same steps: validate, call REST, update local
+data, save the offline copy and notify listeners.
+
 Main packages, with resolved versions in the lockfiles:
 
 - **flutter_bloc 9.1.1 / equatable 3.0.0:** state management and value equality.
@@ -204,8 +223,11 @@ flutter test
 node --test backend/test/scheduler.test.js
 ```
 
-Latest verified results: **40 core Flutter tests and 4 backend tests pass**;
-static analysis is clean. The core tests cover repositories, Bloc/Cubit behavior,
+Latest checks with Flutter 3.47.1: **39 of 40 core Flutter tests pass**;
+the same quick-tile navigation test also failed before the update. It expects the
+Scenes screen to open and still needs review. Static analysis is clean. The four
+backend tests also pass in the latest run.
+The core tests cover repositories, Bloc/Cubit behavior,
 controls, rollback, offline data, rooms, scenes, schedules, settings and additions.
 They use fakes, so the public broker is not needed for unit/widget tests.
 
@@ -215,7 +237,7 @@ Another **58 regression tests** are available separately:
 flutter test un_used/extended_tests
 ```
 
-These also passed. Older learning/debug tools are kept in
+All 58 pass in the latest run. Older learning/debug tools are kept in
 [un_used](un_used/README.md), outside normal runtime and test discovery.
 
 ## Issues faced
@@ -229,13 +251,13 @@ These also passed. Older learning/debug tools are kept in
 
 ## Pending work and honest limits
 
+- **Quick-tile navigation check:** one existing responsive-layout test cannot find the expected Scenes screen after a tile request. Review the current navigation flow and test together before claiming the full suite passes.
 - **UDP LAN discovery:** not implemented. The core REST/MQTT flows were completed first; the separate app/simulator UDP request/reply flow that returns the hub ID and IP is still missing. Current offline caching does not provide discovery. A reachable LAN can work without internet, but finding a hub would not make the public MQTT broker reachable; local control would need a local communication path too.
-- **Final phone/tablet checks:** responsive layouts and animations have automated checks, but the latest combined device run still needs to be completed after the dedicated room-screen change. This is a verification gap, not a claim of full device coverage.
+- **Final phone/tablet checks:** the current phone recording covers control, rollback, offline search, recovery and the main screens. Complete physical CRUD, tablet/wall-panel and animation checks are still pending. Automated layout checks do not prove full device coverage.
 - **Startup issue:** one earlier debug launch showed Android's no-focused-window/not-responding error. A later launch worked, but the cause has not been confirmed as resolved. It needs another startup check.
 - **Clean-machine build:** the setup steps above describe the intended local run. A fresh checkout on another machine has not been fully verified, especially the existing Firebase/Gradle compatibility issue.
-- **Demo video:** the final reviewed 2-3 minute recording is not ready. It must show live control, failure rollback/retry and offline mode using the latest build.
-- **Repository access:** the final repository link and reviewer access still need to be provided and checked.
-- **APK attachment and final checks:** a release APK is installed on the phone, and its REST/MQTT connection was checked over LAN. Full release-flow checks and the final APK attachment still need to be completed; connection success alone is not a full acceptance test.
+- **Latest GitHub upload:** the current automated session could not write Git metadata or reach GitHub over HTTPS. The changes and video are prepared locally; push them from a terminal with normal repository access, then check reviewer access.
+- **APK attachment and final checks:** the demo uses a newly built debug APK from the current source. `apk/app-release.apk` is an earlier release, not a new build of these latest changes. A fresh release APK and full release-flow checks still need to be completed.
 
 For the local HTTP setup, build the optional debug APK with:
 

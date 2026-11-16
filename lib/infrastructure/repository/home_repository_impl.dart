@@ -1,5 +1,3 @@
-import '../../domain/entities/temperature_reading.dart';
-import '../models/temperature_history_model.dart';
 import 'dart:async';
 
 import 'package:dio/dio.dart';
@@ -8,6 +6,7 @@ import '../../domain/entities/app_settings.dart';
 import '../../domain/entities/home_snapshot.dart';
 import '../../domain/entities/room.dart';
 import '../../domain/entities/schedule.dart';
+import '../../domain/entities/temperature_reading.dart';
 import '../../domain/repository/home_repository.dart';
 import '../../domain/transport/device_transport.dart';
 import '../local/home_store.dart';
@@ -15,17 +14,61 @@ import '../models/home_model.dart';
 import '../models/scene_model.dart';
 import '../models/schedule_model.dart';
 import '../models/settings_model.dart';
+import '../models/temperature_history_model.dart';
 
-class _Pending {
-  _Pending(this.id, this.patch);
+// Remember the command ID, requested values and reply we are waiting for.
+class _PendingCommand {
+  _PendingCommand({required this.commandId, required this.targetState});
 
-  final String id;
-  final Map<String, dynamic> patch;
-  final done = Completer<void>();
+  final String commandId;
+  final Map<String, dynamic> targetState;
+
+  // The MQTT reply completes the Future that command() is waiting for.
+  final confirmation = Completer<void>();
 }
 
-// Combine REST configuration, live confirmed state and the local SQLite cache.
+// Share REST data, confirmed MQTT updates and SQLite data with Bloc/Cubit.
 class HomeRepositoryImpl implements HomeRepository {
+  // Setup and shared data
+
+  final Dio api;
+  DeviceTransport transport;
+  final HomeStore store;
+  final Duration commandTimeout;
+  final DeviceTransport Function(AppSettings)? transportFactory;
+
+  final _snapshotController = StreamController<HomeSnapshot>.broadcast();
+  final _connectionController = StreamController<HubConnection>.broadcast();
+  final _messageController = StreamController<String>.broadcast();
+  late StreamSubscription<DeviceUpdate> _deviceSubscription;
+  late StreamSubscription<HubConnection> _connectionSubscription;
+
+  HomeSnapshot _snapshot = const HomeSnapshot();
+  AppSettings _settings = const AppSettings();
+  HubConnection _connectionStatus = HubConnection.offline;
+  bool _isDisposed = false;
+  bool _isChangingConnection = false;
+  bool _restAvailable = false;
+  Timer? _restRetryTimer;
+
+  final _pendingCommands = <String, _PendingCommand>{};
+  final _favouriteOverrides = <String, dynamic>{};
+  final _temperatureHistory = <String, List<TemperatureReading>>{};
+
+  // These futures keep local writes in order and let callers share one refresh.
+  Future<void>? _activeRefresh;
+  Future<void>? _lastHistorySave;
+  Future<void>? _lastFavouriteSave;
+
+  // Changing settings invalidates requests started with the old server address.
+  int _connectionVersion = 0;
+  int _activeSaves = 0;
+
+  // Versions stop a slow REST refresh from replacing newer MQTT or CRUD changes.
+  final _deviceVersions = <String, int>{};
+  int _sceneVersion = 0;
+  int _scheduleVersion = 0;
+
   HomeRepositoryImpl({
     required this.api,
     required this.transport,
@@ -33,331 +76,292 @@ class HomeRepositoryImpl implements HomeRepository {
     this.commandTimeout = const Duration(seconds: 3),
     this.transportFactory,
   }) {
-    _listenTransport();
+    _listenToTransport();
   }
 
-  final Dio api;
-  DeviceTransport transport;
-  final DeviceTransport Function(AppSettings)? transportFactory;
-  final HomeStore store;
-  final Duration commandTimeout;
-  final _changes = StreamController<HomeSnapshot>.broadcast();
-  final _connections = StreamController<HubConnection>.broadcast();
-  final _messages = StreamController<String>.broadcast();
-  final _pending = <String, _Pending>{};
-  final _revisions = <String, int>{};
-  final _favourites = <String, dynamic>{};
-  final _temperatureHistory = <String, List<TemperatureReading>>{};
-  Future<void>? _historyWrite;
-  late StreamSubscription<DeviceUpdate> _updatesSubscription;
-  late StreamSubscription<HubConnection> _connectionSubscription;
-  HomeSnapshot _snapshot = const HomeSnapshot();
-  HubConnection _connection = HubConnection.offline;
-  bool _disposed = false;
-  bool _reconfiguring = false;
-  bool _restAvailable = false;
-  Timer? _restRetry;
-  int _generation = 0, _writes = 0;
-  AppSettings _settings = const AppSettings();
-  Future<void>? _refreshing;
-  Future<void> _favouriteWrite = Future.value();
-  int _sceneRevision = 0;
-  int _scheduleRevision = 0;
-
-  // Bind one active transport and invalidate callbacks from older connections.
-  void _listenTransport() {
-    _updatesSubscription = transport.updates.listen(
-      _receive,
-      onError: (Object error) {
-        if (!_disposed && !_reconfiguring) {
-          _messages.add('Invalid device update received. Last confirmed values are unchanged. Refresh to retry.');
-        }
-      },
-    );
-    _connectionSubscription = transport.connections.listen((status) {
-      if (_disposed) return;
-      if (status == HubConnection.connected) {
-        // A failed REST sync retries independently while MQTT stays subscribed.
-        _connections.add(_connection = HubConnection.reconnecting);
-        unawaited(refresh().catchError((Object _) {}));
-      } else {
-        _connections.add(_connection = status);
-        for (final pending in _pending.values) {
-          if (!pending.done.isCompleted) {
-            pending.done.completeError(StateError('Connection lost. Retry when connected.'));
-          }
-        }
-      }
-    });
-  }
-
+  // Return the last confirmed home data.
   @override
   HomeSnapshot get current => _snapshot;
 
-  // Expose bounded, immutable readings already received from the sensor.
+  // Notify Bloc/Cubit when home data changes.
   @override
-  List<TemperatureReading> temperatureHistory(String deviceId) =>
-      List.unmodifiable(_temperatureHistory[deviceId] ?? []);
+  Stream<HomeSnapshot> get changes => _snapshotController.stream;
 
+  // Notify Bloc/Cubit when the hub connection changes.
   @override
-  Future<List<Room>> getRooms() async => List.unmodifiable(_snapshot.rooms);
+  Stream<HubConnection> get connections => _connectionController.stream;
 
+  // Report recoverable errors without replacing useful data.
   @override
-  Stream<HomeSnapshot> get changes => _changes.stream;
+  Stream<String> get messages => _messageController.stream;
 
+  // Allow commands only when REST and MQTT are both ready.
   @override
-  Stream<HubConnection> get connections => _connections.stream;
-
-  @override
-  Stream<String> get messages => _messages.stream;
-
-  @override
-  bool get connected =>
-      !_reconfiguring && _restAvailable && transport.connected && _connection == HubConnection.connected;
-
-  @override
-  bool get restAvailable => _restAvailable && !_reconfiguring;
-
-  @override
-  bool isFavourite(String id, bool initial, {bool scene = false}) =>
-      _favourites['${scene ? 'scene' : 'device'}:$id'] as bool? ?? initial;
-
-  void _emit() {
-    if (!_disposed) _changes.add(_snapshot);
-  }
-
-  Future<void> _save() => store.write('snapshot', HomeModel(_snapshot).toJson());
-
-  @override
-  Future<void> loadCache() async {
-    final history = await store.read('temperatureHistory');
-    _temperatureHistory
-      ..clear()
-      ..addAll(const TemperatureHistoryModel().fromJson(history ?? {}));
-    _favourites.addAll(await store.read('favourites') ?? {});
-    final cached = await store.read('snapshot');
-    if (cached != null) {
-      _snapshot = const HomeModel(HomeSnapshot()).fromJson(cached);
+  bool get connected {
+    if (_isChangingConnection || !_restAvailable || !transport.connected) {
+      return false;
     }
-    _emit();
+    return _connectionStatus == HubConnection.connected;
   }
 
+  // Allow REST operations while the current server is reachable.
   @override
-  Future<void> connect() => transport.connect();
+  bool get restAvailable => _restAvailable && !_isChangingConnection;
 
+  // Return the current preferences.
+  @override
+  AppSettings get settings => _settings;
+
+  // Return the rooms already loaded into memory.
+  @override
+  Future<List<Room>> getRooms() async {
+    return List.unmodifiable(_snapshot.rooms);
+  }
+
+  // Return sensor readings without allowing callers to edit the stored list.
+  @override
+  List<TemperatureReading> temperatureHistory(String deviceId) {
+    return List.unmodifiable(_temperatureHistory[deviceId] ?? []);
+  }
+
+  // Use the local favourite choice when one exists.
+  @override
+  bool isFavourite(String id, bool initial, {bool scene = false}) {
+    final type = scene ? 'scene' : 'device';
+    final savedValue = _favouriteOverrides['$type:$id'] as bool?;
+    return savedValue ?? initial;
+  }
+
+  // Find a device in the confirmed home data.
+  Device? _findDevice(String id) {
+    for (final device in _snapshot.devices) {
+      if (device.id == id) return device;
+    }
+    return null;
+  }
+
+  // Tell listeners that the confirmed home data changed.
+  void _notifySnapshotChanged() {
+    if (!_isDisposed) _snapshotController.add(_snapshot);
+  }
+
+  // Count active REST saves so settings cannot interrupt them.
+  void _beginSave() {
+    if (_isChangingConnection) {
+      throw StateError('Connection settings are being applied. Retry.');
+    }
+    _activeSaves++;
+  }
+
+  // Load and refresh home data
+
+  // Share an existing refresh instead of sending duplicate REST requests.
   @override
   Future<void> refresh() {
-    if (_refreshing != null) return _refreshing!;
-    _restRetry?.cancel();
-    _restRetry = null;
-    final generation = _generation;
-    late final Future<void> operation;
-    operation = _fetch()
-        .catchError((Object error, StackTrace stack) {
-          if (!_disposed && generation == _generation && error is DioException) {
-            _restFailed();
-          }
-          Error.throwWithStackTrace(error, stack);
-        })
-        .whenComplete(() {
-          if (identical(_refreshing, operation)) _refreshing = null;
-        });
-    _refreshing = operation;
+    if (_activeRefresh != null) return _activeRefresh!;
+    _restRetryTimer?.cancel();
+    _restRetryTimer = null;
+
+    final operation = _refreshFromServer(_connectionVersion);
+    _activeRefresh = operation;
     return operation;
   }
 
-  // Retry failed REST syncs without waiting for another MQTT connection event.
-  void _restFailed() {
-    if (_disposed || _reconfiguring) return;
+  // Fetch data and schedule recovery only when the current REST server fails.
+  Future<void> _refreshFromServer(int connectionVersion) async {
+    try {
+      await _fetchSnapshot();
+    } on DioException {
+      if (!_isDisposed && connectionVersion == _connectionVersion) {
+        _markRestUnavailable();
+      }
+      rethrow;
+    } finally {
+      if (connectionVersion == _connectionVersion) _activeRefresh = null;
+    }
+  }
+
+  // Load all REST resources and preserve any newer local changes.
+  Future<void> _fetchSnapshot() async {
+    final connectionVersion = _connectionVersion;
+    final sceneVersion = _sceneVersion;
+    final scheduleVersion = _scheduleVersion;
+    final deviceVersions = Map<String, int>.from(_deviceVersions);
+
+    final responses = await Future.wait([
+      api.get<dynamic>('/hub'),
+      api.get<dynamic>('/rooms'),
+      api.get<dynamic>('/devices'),
+      api.get<dynamic>('/scenes'),
+      api.get<dynamic>('/schedules'),
+    ]);
+    if (_isDisposed || connectionVersion != _connectionVersion) return;
+
+    final json = <String, dynamic>{
+      'hub': responses[0].data,
+      'rooms': responses[1].data,
+      'devices': responses[2].data,
+      'scenes': responses[3].data,
+      'schedules': responses[4].data,
+      'lastSync': DateTime.now().toUtc().toIso8601String(),
+    };
+    final fetched = const HomeModel(HomeSnapshot()).fromJson(json);
+    final devices = <Device>[];
+
+    for (final fetchedDevice in fetched.devices) {
+      final currentDevice = _findDevice(fetchedDevice.id);
+      if (currentDevice != null) {
+        final receivedDuringRefresh =
+            (_deviceVersions[fetchedDevice.id] ?? 0) != (deviceVersions[fetchedDevice.id] ?? 0);
+        final hasNewerTimestamp = currentDevice.lastUpdated.isAfter(fetchedDevice.lastUpdated);
+        if (receivedDuringRefresh || hasNewerTimestamp) {
+          devices.add(currentDevice);
+          continue;
+        }
+      }
+      devices.add(fetchedDevice);
+    }
+
+    var scenes = fetched.scenes;
+    if (sceneVersion != _sceneVersion) scenes = _snapshot.scenes;
+    var schedules = fetched.schedules;
+    if (scheduleVersion != _scheduleVersion) schedules = _snapshot.schedules;
+
+    _snapshot = HomeSnapshot(
+      hubName: fetched.hubName,
+      rooms: fetched.rooms,
+      devices: devices,
+      scenes: scenes,
+      schedules: schedules,
+      lastSync: fetched.lastSync,
+    );
+    await _saveSnapshot();
+    _restAvailable = true;
+    _restRetryTimer?.cancel();
+    _restRetryTimer = null;
+    _notifySnapshotChanged();
+    if (transport.connected && _connectionStatus != HubConnection.connected) {
+      _setConnectionStatus(HubConnection.connected);
+    }
+  }
+
+  // Refresh automatically while keeping existing data if the request fails.
+  Future<void> _refreshInBackground() async {
+    try {
+      await refresh();
+    } catch (_) {
+      // REST connection failures schedule their next attempt in refresh().
+    }
+  }
+
+  // Retry REST after two seconds without restarting a working MQTT connection.
+  void _markRestUnavailable() {
+    if (_isDisposed || _isChangingConnection) return;
     _restAvailable = false;
-    _connections.add(_connection = transport.connected ? HubConnection.reconnecting : HubConnection.offline);
-    if (_restRetry != null) return;
-    final generation = _generation;
-    _restRetry = Timer(const Duration(seconds: 2), () {
-      _restRetry = null;
-      if (_disposed || _reconfiguring || generation != _generation) return;
-      unawaited(refresh().catchError((Object _) {}));
+    if (transport.connected) {
+      _setConnectionStatus(HubConnection.reconnecting);
+    } else {
+      _setConnectionStatus(HubConnection.offline);
+    }
+    if (_restRetryTimer != null) return;
+
+    final connectionVersion = _connectionVersion;
+    _restRetryTimer = Timer(const Duration(seconds: 2), () {
+      _restRetryTimer = null;
+      if (_isDisposed || _isChangingConnection || connectionVersion != _connectionVersion) {
+        return;
+      }
+      unawaited(_refreshInBackground());
     });
   }
 
-  Future<void> _fetch() async {
-    final generation = _generation;
-    final sceneRevision = _sceneRevision;
-    final scheduleRevision = _scheduleRevision;
-    final revisions = Map<String, int>.from(_revisions);
-    final values = await Future.wait(
-      ['hub', 'rooms', 'devices', 'scenes', 'schedules'].map((resource) => api.get<dynamic>('/$resource')),
-    );
-    final json = <String, dynamic>{
-      'hub': values[0].data,
-      'rooms': values[1].data,
-      'devices': values[2].data,
-      'scenes': values[3].data,
-      'schedules': values[4].data,
-      'lastSync': DateTime.now().toUtc().toIso8601String(),
-    };
-    if (_disposed || generation != _generation) return;
-    var fresh = const HomeModel(HomeSnapshot()).fromJson(json);
-    // Keep live messages received while this REST request was in flight.
-    fresh = fresh.withDevices(
-      fresh.devices.map((device) {
-        final current = _snapshot.devices.where((d) => d.id == device.id).firstOrNull;
-        return current != null &&
-                ((_revisions[device.id] ?? 0) != (revisions[device.id] ?? 0) ||
-                    current.lastUpdated.isAfter(device.lastUpdated))
-            ? current
-            : device;
-      }).toList(),
-    );
-    // A slower refresh cannot undo a completed scene save or deletion.
-    if (sceneRevision != _sceneRevision || scheduleRevision != _scheduleRevision) {
-      fresh = HomeSnapshot(
-        hubName: fresh.hubName,
-        rooms: fresh.rooms,
-        devices: fresh.devices,
-        scenes: sceneRevision != _sceneRevision ? _snapshot.scenes : fresh.scenes,
-        schedules: scheduleRevision != _scheduleRevision ? _snapshot.schedules : fresh.schedules,
-        lastSync: fresh.lastSync,
+  /// ================= Scenes =============================
+  //region Scenes
+  // Scenes
+
+  // Validate and save a scene through REST without running its actions.
+  @override
+  Future<Scene> saveScene(Scene scene, {required bool isNew}) async {
+    _beginSave();
+    try {
+      final model = SceneModel(
+        id: scene.id,
+        name: scene.name.trim(),
+        icon: scene.icon,
+        favourite: scene.favourite,
+        actions: scene.actions,
       );
-    }
-    if (_disposed) return;
-    _snapshot = fresh;
-    await _save();
-    _restAvailable = true;
-    _restRetry?.cancel();
-    _restRetry = null;
-    _emit();
-    if (transport.connected && _connection != HubConnection.connected) {
-      _connections.add(_connection = HubConnection.connected);
-    }
-  }
-
-  void _receive(DeviceUpdate update) {
-    if (_disposed || _reconfiguring) return;
-    final device = _snapshot.devices.where((d) => d.id == update.deviceId).firstOrNull;
-    if (device == null) return;
-    if (!validState(device.type, update.state)) {
-      _messages.add('Invalid update for ${device.name}. Last confirmed values are unchanged. Refresh to retry.');
-      return;
-    }
-    final timestamp = update.timestamp ?? DateTime.now().toUtc();
-    if (timestamp.isBefore(device.lastUpdated)) return;
-    if (device.type == DeviceType.sensor && update.state['temperature'] is num) {
-      _recordTemperature(device.id, timestamp, (update.state['temperature'] as num).toDouble());
-    }
-    _revisions[device.id] = (_revisions[device.id] ?? 0) + 1;
-    _snapshot = _snapshot.withDevices(
-      _snapshot.devices.map((d) => d.id == device.id ? d.confirmed(update.state, timestamp) : d).toList(),
-    );
-    _emit();
-    unawaited(
-      _save().catchError((Object _) {
-        /* Keep confirmed live values if local storage is temporarily unavailable. */
-      }),
-    );
-    final pending = _pending[device.id];
-    if (pending != null &&
-        pending.id == update.commandId &&
-        !pending.done.isCompleted &&
-        pending.patch.entries.every((entry) => update.state[entry.key] == entry.value)) {
-      pending.done.complete();
-    }
-  }
-
-  // Keep the latest 360 real readings and persist writes in arrival order.
-  void _recordTemperature(String id, DateTime time, double value) {
-    final samples = _temperatureHistory.putIfAbsent(id, () => []);
-    if (samples.isNotEmpty && !time.isAfter(samples.last.timestamp)) return;
-    samples.add(TemperatureReading(time, value));
-    if (samples.length > 360) samples.removeRange(0, samples.length - 360);
-    _historyWrite = (_historyWrite ?? Future<void>.value())
-        .catchError((Object _) {})
-        .then((_) {
-          return store.write('temperatureHistory', TemperatureHistoryModel(_temperatureHistory).toJson());
-        })
-        .catchError((Object _) {
-          // Keep live readings in memory and retry persistence on the next sample.
-        });
-  }
-
-  // Clear collected readings together with downloaded hub data.
-  Future<void> _clearTemperatureHistory() async {
-    await _historyWrite;
-    _temperatureHistory.clear();
-    await store.write('temperatureHistory', {});
-  }
-
-  @override
-  Future<void> setFavourite(String id, bool value, {bool scene = false}) =>
-      _favouriteWrite = _favouriteWrite.catchError((Object _) {}).then((_) async {
-        final next = {..._favourites, '${scene ? 'scene' : 'device'}:$id': value};
-        await store.write('favourites', next);
-        _favourites
-          ..clear()
-          ..addAll(next);
-        _emit();
-      });
-
-  // Store a scene definition through REST; saving never sends device commands.
-  @override
-  Future<Scene> saveScene(Scene scene, {required bool isNew}) => _write(() => _saveScene(scene, isNew: isNew));
-
-  Future<Scene> _saveScene(Scene scene, {required bool isNew}) async {
-    final model = SceneModel(
-      id: scene.id,
-      name: scene.name.trim(),
-      icon: scene.icon,
-      favourite: scene.favourite,
-      actions: scene.actions,
-    );
-    const SceneModel().fromJson(model.toJson());
-    if (model.name.length > 60) {
-      throw const FormatException('Use a scene name of 60 characters or fewer.');
-    }
-    for (final action in model.actions) {
-      final device = _snapshot.devices.where((d) => d.id == action.deviceId).firstOrNull;
-      if (device == null || !validCommandTarget(device.type, action.state)) {
-        throw const FormatException('Choose supported devices and valid target states.');
+      const SceneModel().fromJson(model.toJson());
+      if (model.name.length > 60) {
+        throw const FormatException('Use a scene name of 60 characters or fewer.');
       }
+      for (final action in model.actions) {
+        final device = _findDevice(action.deviceId);
+        if (device == null || !validCommandTarget(device.type, action.state)) {
+          throw const FormatException('Choose supported devices and valid target states.');
+        }
+      }
+
+      final alreadyExists = _snapshot.scenes.any((savedScene) => savedScene.id == model.id);
+      Response<dynamic> response;
+      if (isNew && !alreadyExists) {
+        response = await api.post<dynamic>('/scenes', data: model.toJson());
+      } else {
+        final id = Uri.encodeComponent(model.id);
+        response = await api.patch<dynamic>('/scenes/$id', data: model.toJson());
+      }
+      final savedScene = const SceneModel().fromJson(Map<String, dynamic>.from(response.data as Map));
+      if (savedScene.id != model.id) {
+        throw const FormatException('Unexpected scene ID in the hub response.');
+      }
+
+      final scenes = List<Scene>.from(_snapshot.scenes);
+      scenes.removeWhere((scene) => scene.id == savedScene.id);
+      scenes.add(savedScene);
+      _sceneVersion++;
+      _replaceScenes(scenes);
+      await _saveSnapshot();
+      _notifySnapshotChanged();
+      return savedScene;
+    } on DioException {
+      _markRestUnavailable();
+      rethrow;
+    } finally {
+      _activeSaves--;
     }
-    // A retry after a local cache failure updates the same stable scene ID.
-    final create = isNew && !_snapshot.scenes.any((s) => s.id == model.id);
-    final response = create
-        ? await api.post<dynamic>('/scenes', data: model.toJson())
-        : await api.patch<dynamic>('/scenes/${Uri.encodeComponent(model.id)}', data: model.toJson());
-    final saved = const SceneModel().fromJson(Map<String, dynamic>.from(response.data as Map));
-    if (saved.id != model.id) {
-      throw const FormatException('Unexpected scene ID in the hub response.');
-    }
-    _sceneRevision++;
-    _replaceScenes([..._snapshot.scenes.where((s) => s.id != saved.id), saved]);
-    await _save();
-    _emit();
-    return saved;
   }
 
-  // Guard schedule references before deleting a scene from the mock server.
+  // Delete a scene only after checking that no schedule uses it.
   @override
-  Future<void> deleteScene(String id) => _write(() => _deleteScene(id));
+  Future<void> deleteScene(String id) async {
+    _beginSave();
+    try {
+      final response = await api.get<dynamic>('/schedules');
+      if (response.data is! List) {
+        throw const FormatException('Cannot verify schedule references.');
+      }
+      for (final schedule in response.data as List) {
+        if (schedule['target']?['type'] == 'scene' && schedule['target']?['id'] == id) {
+          throw StateError('This scene is used by a schedule. Retarget or delete that schedule first.');
+        }
+      }
 
-  Future<void> _deleteScene(String id) async {
-    final response = await api.get<dynamic>('/schedules');
-    if (response.data is! List) {
-      throw const FormatException('Cannot verify schedule references.');
+      await api.delete<dynamic>('/scenes/${Uri.encodeComponent(id)}');
+      final scenes = List<Scene>.from(_snapshot.scenes);
+      scenes.removeWhere((scene) => scene.id == id);
+      _sceneVersion++;
+      _replaceScenes(scenes);
+      await _saveSnapshot();
+      _notifySnapshotChanged();
+    } on DioException {
+      _markRestUnavailable();
+      rethrow;
+    } finally {
+      _activeSaves--;
     }
-    final referenced = (response.data as List).any(
-      (schedule) => schedule['target']?['type'] == 'scene' && schedule['target']?['id'] == id,
-    );
-    if (referenced) {
-      throw StateError('This scene is used by a schedule. Retarget or delete that schedule first.');
-    }
-    await api.delete<dynamic>('/scenes/${Uri.encodeComponent(id)}');
-    _sceneRevision++;
-    _replaceScenes(_snapshot.scenes.where((s) => s.id != id).toList());
-    await _save();
-    _emit();
   }
 
+  // Replace scenes while keeping the other confirmed home data.
   void _replaceScenes(List<Scene> scenes) {
     _snapshot = HomeSnapshot(
       hubName: _snapshot.hubName,
@@ -368,60 +372,89 @@ class HomeRepositoryImpl implements HomeRepository {
       lastSync: _snapshot.lastSync,
     );
   }
+  //endregion
+  /// ================================================
 
-  // Save configuration only; the running simulator executes due schedules.
+  /// ================== Schedules =======================
+  //region Schedules
+  // Schedules
+
+  // Validate and save schedule configuration for the backend scheduler.
   @override
-  Future<Schedule> saveSchedule(Schedule schedule, {required bool isNew}) =>
-      _write(() => _saveSchedule(schedule, isNew: isNew));
+  Future<Schedule> saveSchedule(Schedule schedule, {required bool isNew}) async {
+    _beginSave();
+    try {
+      final model = ScheduleModel(
+        id: schedule.id,
+        name: schedule.name.trim(),
+        target: schedule.target,
+        time: schedule.time,
+        days: schedule.days,
+        enabled: schedule.enabled,
+      );
+      const ScheduleModel().fromJson(model.toJson());
+      if (model.target.type == 'scene') {
+        final sceneExists = _snapshot.scenes.any((scene) => scene.id == model.target.id);
+        if (!sceneExists) {
+          throw const FormatException('The selected scene no longer exists. Choose another scene.');
+        }
+      } else {
+        final device = _findDevice(model.target.id);
+        if (device == null || !validCommandTarget(device.type, model.target.state)) {
+          throw const FormatException('Choose a supported device and valid target values.');
+        }
+      }
 
-  Future<Schedule> _saveSchedule(Schedule schedule, {required bool isNew}) async {
-    final model = ScheduleModel(
-      id: schedule.id,
-      name: schedule.name.trim(),
-      target: schedule.target,
-      time: schedule.time,
-      days: schedule.days,
-      enabled: schedule.enabled,
-    );
-    const ScheduleModel().fromJson(model.toJson());
-    if (model.target.type == 'scene') {
-      if (!_snapshot.scenes.any((scene) => scene.id == model.target.id)) {
-        throw const FormatException('The selected scene no longer exists. Choose another scene.');
+      final alreadyExists = _snapshot.schedules.any((savedSchedule) => savedSchedule.id == model.id);
+      Response<dynamic> response;
+      if (isNew && !alreadyExists) {
+        response = await api.post<dynamic>('/schedules', data: model.toJson());
+      } else {
+        final id = Uri.encodeComponent(model.id);
+        response = await api.patch<dynamic>('/schedules/$id', data: model.toJson());
       }
-    } else {
-      final device = _snapshot.devices.where((device) => device.id == model.target.id).firstOrNull;
-      if (device == null || !validCommandTarget(device.type, model.target.state)) {
-        throw const FormatException('Choose a supported device and valid target values.');
+      final savedSchedule = const ScheduleModel().fromJson(Map<String, dynamic>.from(response.data as Map));
+      if (savedSchedule.id != model.id) {
+        throw const FormatException('Unexpected schedule ID from the hub.');
       }
+
+      final schedules = List<Schedule>.from(_snapshot.schedules);
+      schedules.removeWhere((schedule) => schedule.id == savedSchedule.id);
+      schedules.add(savedSchedule);
+      _scheduleVersion++;
+      _replaceSchedules(schedules);
+      await _saveSnapshot();
+      _notifySnapshotChanged();
+      return savedSchedule;
+    } on DioException {
+      _markRestUnavailable();
+      rethrow;
+    } finally {
+      _activeSaves--;
     }
-    final create = isNew && !_snapshot.schedules.any((s) => s.id == model.id);
-    final response = create
-        ? await api.post<dynamic>('/schedules', data: model.toJson())
-        : await api.patch<dynamic>('/schedules/${Uri.encodeComponent(model.id)}', data: model.toJson());
-    final saved = const ScheduleModel().fromJson(Map<String, dynamic>.from(response.data as Map));
-    if (saved.id != model.id) {
-      throw const FormatException('Unexpected schedule ID from the hub.');
-    }
-    _scheduleRevision++;
-    _replaceSchedules([..._snapshot.schedules.where((s) => s.id != saved.id), saved]);
-    await _save();
-    _emit();
-    return saved;
   }
 
   // Remove a schedule without changing its target scene or device.
   @override
-  Future<void> deleteSchedule(String id) => _write(() => _deleteSchedule(id));
-
-  Future<void> _deleteSchedule(String id) async {
-    await api.delete<dynamic>('/schedules/${Uri.encodeComponent(id)}');
-    _scheduleRevision++;
-    _replaceSchedules(_snapshot.schedules.where((s) => s.id != id).toList());
-    await _save();
-    _emit();
+  Future<void> deleteSchedule(String id) async {
+    _beginSave();
+    try {
+      await api.delete<dynamic>('/schedules/${Uri.encodeComponent(id)}');
+      final schedules = List<Schedule>.from(_snapshot.schedules);
+      schedules.removeWhere((schedule) => schedule.id == id);
+      _scheduleVersion++;
+      _replaceSchedules(schedules);
+      await _saveSnapshot();
+      _notifySnapshotChanged();
+    } on DioException {
+      _markRestUnavailable();
+      rethrow;
+    } finally {
+      _activeSaves--;
+    }
   }
 
-  // Preserve the shared confirmed devices and scenes when schedule data changes.
+  // Replace schedules while keeping the other confirmed home data.
   void _replaceSchedules(List<Schedule> schedules) {
     _snapshot = HomeSnapshot(
       hubName: _snapshot.hubName,
@@ -432,163 +465,365 @@ class HomeRepositoryImpl implements HomeRepository {
       lastSync: _snapshot.lastSync,
     );
   }
+  //endregion
 
-  @override
-  AppSettings get settings => _settings;
+  /// ==================================================
 
-  // Restore preferences before the app starts fetching data or connecting MQTT.
+  /// =================== Local storage ===================================///
+
+  //region Local storage
+  // Restore readings, favourite choices and the last confirmed home data.
   @override
-  Future<void> loadSettings() async {
-    final json = await store.read('settings');
-    if (json != null) {
-      await _updateSettings(const SettingsModel(AppSettings()).fromJson(json), persist: false, reconnect: false);
+  Future<void> loadCache() async {
+    final historyJson = await store.read('temperatureHistory');
+    final history = const TemperatureHistoryModel().fromJson(historyJson ?? {});
+    _temperatureHistory.clear();
+    _temperatureHistory.addAll(history);
+
+    final favourites = await store.read('favourites');
+    _favouriteOverrides.addAll(favourites ?? {});
+
+    final snapshotJson = await store.read('snapshot');
+    if (snapshotJson != null) {
+      _snapshot = const HomeModel(HomeSnapshot()).fromJson(snapshotJson);
     }
+    _notifySnapshotChanged();
   }
 
-  // Save preferences first, then replace only connections whose settings changed.
-  @override
-  Future<void> saveSettings(AppSettings value) => _updateSettings(value);
+  // Save confirmed home data for the next offline launch.
+  Future<void> _saveSnapshot() async {
+    await store.write('snapshot', HomeModel(_snapshot).toJson());
+  }
 
-  Future<void> _updateSettings(AppSettings value, {bool persist = true, bool reconnect = true}) async {
-    SettingsModel.validate(value);
-    final changed = !_settings.sameConnection(value);
-    if (_reconfiguring || (changed && (_pending.isNotEmpty || _writes > 0))) {
-      throw StateError('Wait for the current command or save to finish, then retry.');
-    }
-    if (!changed) {
-      if (persist) await store.write('settings', SettingsModel(value).toJson());
-      _settings = value;
-      _emit();
-      return;
-    }
-    if (changed && transportFactory == null) {
-      throw StateError('Connection changes are unavailable.');
-    }
-    _reconfiguring = true;
+  // Keep live confirmed values even if saving the offline snapshot fails.
+  Future<void> _saveSnapshotInBackground() async {
     try {
-      if (persist) await store.write('settings', SettingsModel(value).toJson());
-      if (changed) {
-        _generation++;
-        _restRetry?.cancel();
-        _restRetry = null;
-        _restAvailable = false;
-        _refreshing = null;
-        _connections.add(_connection = HubConnection.reconnecting);
-        await _updatesSubscription.cancel();
-        await _connectionSubscription.cancel();
-        await transport.dispose();
-        api.options.baseUrl = value.restUrl;
-        transport = transportFactory!(value);
-        _listenTransport();
-        if (persist) {
-          await store.write('snapshot', const HomeModel(HomeSnapshot()).toJson());
-          await _clearTemperatureHistory();
-          _snapshot = const HomeSnapshot();
-          _revisions.clear();
-          _emit();
-        }
-      }
-      _settings = value;
-    } finally {
-      _reconfiguring = false;
-    }
-    if (changed && reconnect) {
-      unawaited(connect().catchError((Object _) {}));
-      unawaited(refresh().catchError((Object _) {}));
+      await _saveSnapshot();
+    } catch (_) {
+      // The next update or refresh can save the snapshot again.
     }
   }
 
-  // Clear downloaded hub data while preserving local preferences and stars.
+  // Queue favourite saves so quick taps cannot overwrite each other.
+  @override
+  Future<void> setFavourite(String id, bool value, {bool scene = false}) {
+    final operation = _saveFavourite(_lastFavouriteSave, id, value, scene);
+    _lastFavouriteSave = operation;
+    return operation;
+  }
+
+  // Save a local favourite choice before notifying the screen.
+  Future<void> _saveFavourite(Future<void>? previousSave, String id, bool value, bool scene) async {
+    try {
+      await previousSave;
+    } catch (_) {
+      // A failed earlier save must not block the user's next choice.
+    }
+
+    final type = scene ? 'scene' : 'device';
+    final favourites = Map<String, dynamic>.from(_favouriteOverrides);
+    favourites['$type:$id'] = value;
+    await store.write('favourites', favourites);
+    _favouriteOverrides.clear();
+    _favouriteOverrides.addAll(favourites);
+    _notifySnapshotChanged();
+  }
+
+  // Keep the latest 360 received readings and queue their local save.
+  void _recordTemperature(String id, DateTime timestamp, double temperature) {
+    final readings = _temperatureHistory.putIfAbsent(id, () => []);
+    if (readings.isNotEmpty && !timestamp.isAfter(readings.last.timestamp)) return;
+    readings.add(TemperatureReading(timestamp, temperature));
+    if (readings.length > 360) {
+      readings.removeRange(0, readings.length - 360);
+    }
+    _lastHistorySave = _saveTemperatureHistory(_lastHistorySave);
+  }
+
+  // Wait for the previous history save so newer data is written last.
+  Future<void> _saveTemperatureHistory(Future<void>? previousSave) async {
+    try {
+      await previousSave;
+      final json = TemperatureHistoryModel(_temperatureHistory).toJson();
+      await store.write('temperatureHistory', json);
+    } catch (_) {
+      // Keep readings in memory and try saving again on the next sample.
+    }
+  }
+
+  // Clear readings after any history save already in progress finishes.
+  Future<void> _clearTemperatureHistory() async {
+    await _lastHistorySave;
+    _temperatureHistory.clear();
+    await store.write('temperatureHistory', {});
+  }
+
+  // Clear downloaded data while preserving preferences and favourite choices.
   @override
   Future<void> clearCache() async {
-    if (_reconfiguring || _pending.isNotEmpty || _writes > 0) {
+    if (_isChangingConnection || _pendingCommands.isNotEmpty || _activeSaves > 0) {
       throw StateError('Wait for the current command or save to finish, then retry.');
     }
-    _reconfiguring = true;
+    _isChangingConnection = true;
     try {
-      _generation++;
-      _restRetry?.cancel();
-      _restRetry = null;
-      _refreshing = null;
+      _connectionVersion++;
+      _restRetryTimer?.cancel();
+      _restRetryTimer = null;
+      _activeRefresh = null;
       await store.write('snapshot', const HomeModel(HomeSnapshot()).toJson());
       _restAvailable = false;
       await _clearTemperatureHistory();
       _snapshot = const HomeSnapshot();
-      _revisions.clear();
-      _emit();
-      _connections.add(_connection = HubConnection.offline);
+      _deviceVersions.clear();
+      _notifySnapshotChanged();
+      _setConnectionStatus(HubConnection.offline);
     } finally {
-      _reconfiguring = false;
+      _isChangingConnection = false;
     }
   }
+  //endregion
 
-  // Keep settings changes from interrupting REST configuration mutations.
-  Future<T> _write<T>(Future<T> Function() action) async {
-    if (_reconfiguring) {
-      throw StateError('Connection settings are being applied. Retry.');
+  /// ========================================================
+
+  /// ====================== Settings =======================///
+
+  //region Settings
+  // Settings
+
+  // Restore saved preferences before the app starts its connections.
+  @override
+  Future<void> loadSettings() async {
+    final json = await store.read('settings');
+    if (json == null) return;
+    final savedSettings = const SettingsModel(AppSettings()).fromJson(json);
+    await _applySettings(savedSettings, persist: false, reconnect: false);
+  }
+
+  // Save preferences and reconnect if the server or MQTT settings changed.
+  @override
+  Future<void> saveSettings(AppSettings value) async {
+    await _applySettings(value);
+  }
+
+  // Save preferences before replacing connections or clearing old hub data.
+  Future<void> _applySettings(AppSettings value, {bool persist = true, bool reconnect = true}) async {
+    SettingsModel.validate(value);
+    final connectionChanged = !_settings.sameConnection(value);
+    final hasActiveWork = _pendingCommands.isNotEmpty || _activeSaves > 0;
+    if (_isChangingConnection || (connectionChanged && hasActiveWork)) {
+      throw StateError('Wait for the current command or save to finish, then retry.');
     }
-    _writes++;
+
+    if (!connectionChanged) {
+      if (persist) await store.write('settings', SettingsModel(value).toJson());
+      _settings = value;
+      _notifySnapshotChanged();
+      return;
+    }
+
+    final createTransport = transportFactory;
+    if (createTransport == null) {
+      throw StateError('Connection changes are unavailable.');
+    }
+    _isChangingConnection = true;
     try {
-      return await action();
-    } catch (error) {
-      if (error is DioException) _restFailed();
-      rethrow;
+      if (persist) await store.write('settings', SettingsModel(value).toJson());
+      _connectionVersion++;
+      _restRetryTimer?.cancel();
+      _restRetryTimer = null;
+      _restAvailable = false;
+      _activeRefresh = null;
+      _setConnectionStatus(HubConnection.reconnecting);
+
+      await _deviceSubscription.cancel();
+      await _connectionSubscription.cancel();
+      await transport.dispose();
+      api.options.baseUrl = value.restUrl;
+      transport = createTransport(value);
+      _listenToTransport();
+
+      if (persist) {
+        await store.write('snapshot', const HomeModel(HomeSnapshot()).toJson());
+        await _clearTemperatureHistory();
+        _snapshot = const HomeSnapshot();
+        _deviceVersions.clear();
+        _notifySnapshotChanged();
+      }
+      _settings = value;
     } finally {
-      _writes--;
+      _isChangingConnection = false;
+    }
+
+    if (reconnect) {
+      unawaited(_connectInBackground());
+      unawaited(_refreshInBackground());
+    }
+  }
+  //endregion
+
+  /// ====================================================
+
+  /// ================= MOTT and device commands ===================
+  //region MQTT and device commands
+  // MQTT and device commands
+
+  // Open the MQTT connection.
+  @override
+  Future<void> connect() async {
+    await transport.connect();
+  }
+
+  // Try a new MQTT connection while its status stream reports the result.
+  Future<void> _connectInBackground() async {
+    try {
+      await connect();
+    } catch (_) {
+      // Connection status remains available through the transport stream.
     }
   }
 
-  // Confirm only the matching request; a timeout leaves the confirmed cache unchanged.
+  // Attach named handlers to device updates and connection changes.
+  void _listenToTransport() {
+    _deviceSubscription = transport.updates.listen(_onDeviceUpdate, onError: _onInvalidDeviceUpdate);
+    _connectionSubscription = transport.connections.listen(_onConnectionChanged);
+  }
+
+  // Refresh after reconnecting or fail commands that lost their connection.
+  void _onConnectionChanged(HubConnection status) {
+    if (_isDisposed) return;
+    if (status == HubConnection.connected) {
+      _setConnectionStatus(HubConnection.reconnecting);
+      unawaited(_refreshInBackground());
+      return;
+    }
+
+    _setConnectionStatus(status);
+    _failPendingCommands('Connection lost. Retry when connected.');
+  }
+
+  // Store the connection value before notifying listeners.
+  void _setConnectionStatus(HubConnection status) {
+    _connectionStatus = status;
+    _connectionController.add(status);
+  }
+
+  // Keep confirmed values when the transport reports a malformed message.
+  void _onInvalidDeviceUpdate(Object error) {
+    if (_isDisposed || _isChangingConnection) return;
+    _messageController.add('Invalid device update received. Last confirmed values are unchanged. Refresh to retry.');
+  }
+
+  // Validate a live reply, update confirmed data and complete its matching command.
+  void _onDeviceUpdate(DeviceUpdate update) {
+    if (_isDisposed || _isChangingConnection) return;
+    final device = _findDevice(update.deviceId);
+    if (device == null) return;
+    if (!validState(device.type, update.state)) {
+      _messageController.add(
+        'Invalid update for ${device.name}. Last confirmed values are unchanged. Refresh to retry.',
+      );
+      return;
+    }
+
+    final timestamp = update.timestamp ?? DateTime.now().toUtc();
+    if (timestamp.isBefore(device.lastUpdated)) return;
+    if (device.type == DeviceType.sensor && update.state['temperature'] is num) {
+      final temperature = (update.state['temperature'] as num).toDouble();
+      _recordTemperature(device.id, timestamp, temperature);
+    }
+
+    _deviceVersions[device.id] = (_deviceVersions[device.id] ?? 0) + 1;
+    final devices = <Device>[];
+    for (final currentDevice in _snapshot.devices) {
+      if (currentDevice.id == device.id) {
+        devices.add(currentDevice.confirmed(update.state, timestamp));
+      } else {
+        devices.add(currentDevice);
+      }
+    }
+    _snapshot = _snapshot.withDevices(devices);
+    _notifySnapshotChanged();
+    unawaited(_saveSnapshotInBackground());
+
+    final command = _pendingCommands[device.id];
+    if (command == null || command.commandId != update.commandId || command.confirmation.isCompleted) {
+      return;
+    }
+    for (final field in command.targetState.entries) {
+      if (update.state[field.key] != field.value) return;
+    }
+    command.confirmation.complete();
+  }
+
+  // Send one MQTT command and wait up to three seconds for its matching reply.
   @override
   Future<void> command(String id, Map<String, dynamic> state) async {
-    final device = _snapshot.devices.where((d) => d.id == id).firstOrNull;
+    final device = _findDevice(id);
     if (!connected) throw StateError('Hub offline. Reconnect and retry.');
     if (device == null || !device.controllable) {
       throw StateError('Device offline or read-only.');
     }
-    if (_pending.containsKey(id)) {
+    if (_pendingCommands.containsKey(id)) {
       throw StateError('A command is already pending for this device.');
     }
     if (!validCommandTarget(device.type, state)) {
       throw const FormatException('Invalid command values.');
     }
-    final pending = _Pending('phone-${DateTime.now().microsecondsSinceEpoch}', Map.of(state));
-    _pending[id] = pending;
-    // Attach timeout handling before publish in case the connection drops immediately.
-    final result = pending.done.future.timeout(
+
+    final command = _PendingCommand(
+      commandId: 'phone-${DateTime.now().microsecondsSinceEpoch}',
+      targetState: Map<String, dynamic>.from(state),
+    );
+    _pendingCommands[id] = command;
+
+    // Listen for a reply before sending, because sending may fail immediately.
+    final reply = command.confirmation.future.timeout(
       commandTimeout,
       onTimeout: () => throw TimeoutException('${device.name} did not respond. Retry.'),
     );
     try {
-      transport.send(id, state, pending.id);
+      transport.send(id, state, command.commandId);
     } catch (error, stack) {
-      if (!pending.done.isCompleted) pending.done.completeError(error, stack);
+      if (!command.confirmation.isCompleted) {
+        command.confirmation.completeError(error, stack);
+      }
     }
     try {
-      await result;
+      await reply;
     } finally {
-      if (_pending[id] == pending) _pending.remove(id);
+      if (_pendingCommands[id] == command) _pendingCommands.remove(id);
     }
   }
 
-  @override
-  Future<void> dispose() async {
-    if (_disposed) return;
-    _disposed = true;
-    _restRetry?.cancel();
-    await _updatesSubscription.cancel();
-    await _connectionSubscription.cancel();
-    for (final pending in _pending.values) {
-      if (!pending.done.isCompleted) {
-        pending.done.completeError(StateError('Dashboard closed.'));
+  // Release commands waiting for a reply when the connection or screen closes.
+  void _failPendingCommands(String message) {
+    for (final command in _pendingCommands.values) {
+      if (!command.confirmation.isCompleted) {
+        command.confirmation.completeError(StateError(message));
       }
     }
+  }
+  //endregion
+
+  /// ==================================================
+
+  // Cleanup
+
+  // Stop listeners, pending replies, network clients and the local database.
+  @override
+  Future<void> dispose() async {
+    if (_isDisposed) return;
+    _isDisposed = true;
+    _restRetryTimer?.cancel();
+    await _deviceSubscription.cancel();
+    await _connectionSubscription.cancel();
+    _failPendingCommands('Dashboard closed.');
     await transport.dispose();
-    await _historyWrite;
+    await _lastHistorySave;
     await store.close();
     api.close();
-    await _changes.close();
-    await _connections.close();
-    await _messages.close();
+    await _snapshotController.close();
+    await _connectionController.close();
+    await _messageController.close();
   }
 }

@@ -1,15 +1,15 @@
-import '../../room_screen/presentation/room_screen.dart';
-import '../widgets/device_grid.dart';
-import '../../history_screen/presentation/history_screen.dart';
-import '../../common/connection_status_banner.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/entities/home_snapshot.dart';
 import '../../../domain/entities/room.dart';
+import '../../common/connection_status_banner.dart';
+import '../../history_screen/presentation/history_screen.dart';
+import '../../room_screen/presentation/room_screen.dart';
 import '../bloc/home_cubit.dart';
 import '../bloc/home_state.dart';
 import '../widgets/device_card.dart';
+import '../widgets/device_grid.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});

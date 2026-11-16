@@ -4,8 +4,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/entities/home_snapshot.dart';
 import '../../../domain/repository/home_repository.dart';
-import 'home_state.dart';
 import '../../common/feedback_message.dart';
+import 'home_state.dart';
 
 class HomeCubit extends Cubit<HomeState> {
   final HomeRepository repository;
